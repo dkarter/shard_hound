@@ -130,7 +130,7 @@ custom classes must fully style the input
 - `Ecto.Changeset.validate_number/2` **DOES NOT SUPPORT the `:allow_nil` option**. By default, Ecto validations only run if a change for the given field exists and the change value is not nil, so such as option is never needed
 - You **must** use `Ecto.Changeset.get_field(changeset, :field)` to access changeset fields
 - Fields which are set programmatically, such as `user_id`, must not be listed in `cast` calls or similar for security purposes. Instead they must be explicitly set when creating the struct
-- **Always** invoke `mix ecto.gen.migration migration_name_using_underscores` when generating migration files, so the correct timestamp and conventions are applied
+- **Always** invoke `ECTO_EDITOR="" mix ecto.gen.migration migration_name_using_underscores` when generating migration files, so the correct timestamp and conventions are applied without opening an interactive editor
 <!-- phoenix:ecto-end -->
 
 <!-- phoenix:html-start -->
