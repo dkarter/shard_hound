@@ -36,6 +36,11 @@ config :phoenix_live_view,
 # at the `config/runtime.exs`.
 config :shard_hound, ShardHound.Mailer, adapter: Swoosh.Adapters.Local
 
+config :shard_hound, Oban,
+  engine: Oban.Engines.Basic,
+  queues: [data_generation: 2],
+  repo: ShardHound.Repo
+
 # Configure esbuild (the version is required)
 config :esbuild,
   version: "0.25.4",

@@ -23,6 +23,8 @@ config :shard_hound, ShardHoundWeb.Endpoint,
 # In test we don't send emails
 config :shard_hound, ShardHound.Mailer, adapter: Swoosh.Adapters.Test
 
+config :shard_hound, Oban, testing: :manual
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 

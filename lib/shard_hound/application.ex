@@ -10,6 +10,7 @@ defmodule ShardHound.Application do
     children = [
       ShardHoundWeb.Telemetry,
       ShardHound.Repo,
+      {Oban, Application.fetch_env!(:shard_hound, Oban)},
       {DNSCluster, query: Application.get_env(:shard_hound, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: ShardHound.PubSub},
       # Start a worker by calling: ShardHound.Worker.start_link(arg)
