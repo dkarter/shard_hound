@@ -35,35 +35,33 @@ defmodule ShardHoundWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
-      <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
-        </a>
-      </div>
-      <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
-          </li>
-          <li>
-            <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost">GitHub</a>
-          </li>
-          <li>
-            <.theme_toggle />
-          </li>
-          <li>
-            <a href="https://phoenix.hexdocs.pm/overview.html" class="btn btn-primary">
-              Get Started <span aria-hidden="true">&rarr;</span>
-            </a>
-          </li>
-        </ul>
+    <header class="border-b border-white/8 bg-[#070b14]/90 backdrop-blur-xl">
+      <div class="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 sm:px-8">
+        <.link navigate={~p"/"} class="group flex items-center gap-3">
+          <span class="relative grid size-9 place-items-center overflow-hidden rounded-xl border border-cyan-300/25 bg-cyan-300/10 text-cyan-300 shadow-[0_0_24px_rgba(34,211,238,0.08)] transition group-hover:border-cyan-300/50 group-hover:bg-cyan-300/15">
+            <.icon name="hero-circle-stack-solid" class="size-5" />
+          </span>
+          <span>
+            <span class="block text-sm font-bold tracking-[0.16em] text-white">SHARDHOUND</span>
+            <span class="block text-[10px] font-medium tracking-[0.18em] text-slate-500">
+              DATASET LAB
+            </span>
+          </span>
+        </.link>
+        <div class="flex items-center gap-3 text-xs font-medium text-slate-400">
+          <span class="hidden items-center gap-2 rounded-full border border-white/8 bg-white/[0.03] px-3 py-1.5 sm:flex">
+            <span class="size-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]"></span>
+            PostgreSQL 18
+          </span>
+          <span class="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1.5">Oban</span>
+        </div>
       </div>
     </header>
 
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
+    <main class="relative overflow-hidden px-5 py-10 sm:px-8 sm:py-14">
+      <div class="pointer-events-none absolute inset-x-0 top-0 -z-10 mx-auto h-[32rem] max-w-5xl bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.09),transparent_65%)]">
+      </div>
+      <div class="mx-auto max-w-7xl">
         {render_slot(@inner_block)}
       </div>
     </main>

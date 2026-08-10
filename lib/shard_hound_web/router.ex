@@ -17,7 +17,7 @@ defmodule ShardHoundWeb.Router do
   scope "/", ShardHoundWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", DataGeneratorLive
   end
 
   # Other scopes may use custom stacks.
