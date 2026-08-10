@@ -30,13 +30,14 @@ defmodule ShardHound.DemoData.GenerateOrganizationWorker do
 
   defp generate_organization(args) do
     now = DateTime.utc_now(:second)
-    generation_key = String.slice(args["generation_id"], 0, 8)
+    generation_id = args["generation_id"]
+    display_key = String.slice(generation_id, 0, 8)
     organization_index = args["organization_index"]
 
     organization =
       %Organization{
-        name: "Demo Organization #{generation_key}-#{organization_index}",
-        slug: "demo-#{generation_key}-#{organization_index}"
+        name: "Demo Organization #{display_key}-#{organization_index}",
+        slug: "demo-#{generation_id}-#{organization_index}"
       }
       |> Repo.insert!()
 
@@ -78,75 +79,90 @@ defmodule ShardHound.DemoData.GenerateOrganizationWorker do
   defp insert_software(organization_id, devices, args, now) do
     definitions = args["package_definitions"]
 
-    {software_rows, memberships} =
-      devices
-      |> Enum.with_index(1)
-      |> Enum.reduce({[], %{}}, fn {device, device_index}, {rows, memberships} ->
-        definitions
-        |> rotate(device_index - 1)
-        |> Enum.take(args["software_per_device"])
-        |> Enum.with_index()
-        |> Enum.reduce({rows, memberships}, fn {software, software_index}, {rows, memberships} ->
-          latest? = rem(device_index + software_index, 4) != 0
+    devices
+    |> Enum.with_index(1)
+    |> Enum.chunk_every(100)
+    |> Enum.reduce(%{}, fn device_batch, memberships ->
+      {software_rows, memberships} =
+        Enum.reduce(device_batch, {[], memberships}, fn {device, device_index},
+                                                        {rows, memberships} ->
+          definitions
+          |> rotate(device_index - 1)
+          |> Enum.take(args["software_per_device"])
+          |> Enum.with_index()
+          |> Enum.reduce({rows, memberships}, fn {software, software_index},
+                                                 {rows, memberships} ->
+            latest? = rem(device_index + software_index, 4) != 0
 
-          version =
-            if latest?, do: software["version"], else: previous_version(software["version"])
+            version =
+              if latest?, do: software["version"], else: previous_version(software["version"])
 
-          row = %{
-            organization_id: organization_id,
-            device_id: device.id,
-            name: software["name"],
-            publisher: software["publisher"],
-            version: version,
-            bundle_identifier: "com.demo.#{software["slug"]}",
-            installed_at:
-              DateTime.add(now, -rem(device_index * (software_index + 1), 720), :hour),
-            metadata: %{managed: rem(software_index, 2) == 0},
-            inserted_at: now,
-            updated_at: now
-          }
+            row = %{
+              organization_id: organization_id,
+              device_id: device.id,
+              name: software["name"],
+              publisher: software["publisher"],
+              version: version,
+              bundle_identifier: "com.demo.#{software["slug"]}",
+              installed_at:
+                DateTime.add(now, -rem(device_index * (software_index + 1), 720), :hour),
+              metadata: %{managed: rem(software_index, 2) == 0},
+              inserted_at: now,
+              updated_at: now
+            }
 
-          memberships =
-            if latest? do
-              Map.update(memberships, software["slug"], [device.id], &[device.id | &1])
-            else
-              memberships
-            end
+            memberships =
+              if latest? do
+                Map.update(memberships, software["slug"], [device.id], &[device.id | &1])
+              else
+                memberships
+              end
 
-          {[row | rows], memberships}
+            {[row | rows], memberships}
+          end)
         end)
-      end)
 
-    software_rows
-    |> Enum.chunk_every(1_000)
-    |> Enum.each(&Repo.insert_all(DeviceSoftware, &1))
-
-    memberships
+      Repo.insert_all(DeviceSoftware, software_rows)
+      memberships
+    end)
   end
 
   defp insert_groups(organization_id, memberships, args, now) do
     definitions = args["package_definitions"]
 
-    Enum.map(1..args["groups_per_organization"], fn group_index ->
-      software = Enum.at(definitions, rem(group_index - 1, length(definitions)))
+    group_specs =
+      Range.new(1, args["groups_per_organization"], 1)
+      |> Enum.map(fn group_index ->
+        software = cycle_at(definitions, group_index)
+        name = "Latest #{software["name"]} #{group_index}"
 
-      group =
-        %Group{
+        row = %{
           organization_id: organization_id,
-          name: "Latest #{software["name"]} #{group_index}",
+          name: name,
           description: "Devices reporting the current managed version of #{software["name"]}",
           filter: %{
             "field" => "device_software.version",
             "software_slug" => software["slug"],
             "operator" => "equals_latest"
           },
-          refreshed_at: now
+          refreshed_at: now,
+          inserted_at: now,
+          updated_at: now
         }
-        |> Repo.insert!()
 
-      memberships
-      |> Map.get(software["slug"], [])
-      |> Enum.map(fn device_id ->
+        %{name: name, software_slug: software["slug"], row: row}
+      end)
+
+    {_count, groups} =
+      Repo.insert_all(Group, Enum.map(group_specs, & &1.row), returning: [:id, :name])
+
+    groups_by_name = Map.new(groups, &{&1.name, &1})
+
+    group_specs
+    |> Enum.flat_map(fn spec ->
+      group = Map.fetch!(groups_by_name, spec.name)
+
+      Enum.map(Map.get(memberships, spec.software_slug, []), fn device_id ->
         %{
           organization_id: organization_id,
           group_id: group.id,
@@ -155,16 +171,16 @@ defmodule ShardHound.DemoData.GenerateOrganizationWorker do
           updated_at: now
         }
       end)
-      |> Enum.chunk_every(1_000)
-      |> Enum.each(&Repo.insert_all(GroupDevice, &1))
-
-      group
     end)
+    |> Enum.chunk_every(1_000)
+    |> Enum.each(&Repo.insert_all(GroupDevice, &1))
+
+    groups
   end
 
   defp insert_custom_packages(organization_id, args, now) do
     rows =
-      count_range(args["custom_packages_per_organization"])
+      Range.new(1, args["custom_packages_per_organization"], 1)
       |> Enum.map(fn package_index ->
         %{
           organization_id: organization_id,
@@ -193,12 +209,12 @@ defmodule ShardHound.DemoData.GenerateOrganizationWorker do
       |> Repo.all()
 
     rows =
-      count_range(args["deployments_per_organization"])
+      Range.new(1, args["deployments_per_organization"], 1)
       |> Enum.map(fn deployment_index ->
         {package_type, package} =
           deployment_package(deployment_index, managed_packages, custom_packages)
 
-        group = Enum.at(groups, rem(deployment_index - 1, length(groups)))
+        group = cycle_at(groups, deployment_index)
 
         %{
           organization_id: organization_id,
@@ -221,15 +237,15 @@ defmodule ShardHound.DemoData.GenerateOrganizationWorker do
   defp deployment_package(index, managed_packages, custom_packages)
 
   defp deployment_package(index, managed_packages, []) do
-    {"shard_hound", Enum.at(managed_packages, rem(index - 1, length(managed_packages)))}
+    {"shard_hound", cycle_at(managed_packages, index)}
   end
 
   defp deployment_package(index, _managed_packages, custom_packages) when rem(index, 2) == 0 do
-    {"custom", Enum.at(custom_packages, rem(index - 1, length(custom_packages)))}
+    {"custom", cycle_at(custom_packages, index)}
   end
 
   defp deployment_package(index, managed_packages, _custom_packages) do
-    {"shard_hound", Enum.at(managed_packages, rem(index - 1, length(managed_packages)))}
+    {"shard_hound", cycle_at(managed_packages, index)}
   end
 
   defp rotate(items, offset) do
@@ -238,6 +254,8 @@ defmodule ShardHound.DemoData.GenerateOrganizationWorker do
   end
 
   defp previous_version(version), do: version <> "-old"
-  defp count_range(0), do: []
-  defp count_range(count), do: 1..count
+
+  defp cycle_at(items, one_based_index) do
+    Enum.at(items, rem(one_based_index - 1, length(items)))
+  end
 end

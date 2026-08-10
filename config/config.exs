@@ -38,7 +38,7 @@ config :shard_hound, ShardHound.Mailer, adapter: Swoosh.Adapters.Local
 
 config :shard_hound, Oban,
   engine: Oban.Engines.Basic,
-  queues: [data_generation: 2],
+  queues: [data_generation_coordinator: 1, data_generation: 2],
   repo: ShardHound.Repo
 
 # Configure esbuild (the version is required)

@@ -66,4 +66,29 @@ defmodule ShardHound.DemoDataTest do
                where: software.organization_id == ^organization.id and software.version != ""
            )
   end
+
+  test "tenant foreign keys reject cross-organization device data" do
+    organization = ShardHound.Repo.insert!(%Organization{name: "One", slug: "one"})
+    other_organization = ShardHound.Repo.insert!(%Organization{name: "Two", slug: "two"})
+
+    device =
+      ShardHound.Repo.insert!(%Device{
+        organization_id: organization.id,
+        serial_number: "ONE-1",
+        hostname: "one-1",
+        platform: "macos",
+        architecture: "arm64",
+        os_version: "15.6"
+      })
+
+    assert_raise Ecto.ConstraintError, fn ->
+      ShardHound.Repo.insert!(%DeviceSoftware{
+        organization_id: other_organization.id,
+        device_id: device.id,
+        name: "Google Chrome",
+        version: "140.0",
+        bundle_identifier: "com.google.Chrome"
+      })
+    end
+  end
 end

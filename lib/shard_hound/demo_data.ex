@@ -3,7 +3,15 @@ defmodule ShardHound.DemoData do
 
   alias ShardHound.DemoData.GenerationParams
   alias ShardHound.DemoData.GenerateDatasetWorker
+  alias ShardHound.DeviceManagement.Deployment
+  alias ShardHound.DeviceManagement.Device
+  alias ShardHound.DeviceManagement.DeviceSoftware
+  alias ShardHound.DeviceManagement.Group
+  alias ShardHound.DeviceManagement.Organization
   alias ShardHound.Repo
+
+  @terminal_states ~w(completed discarded cancelled)
+  @active_states Oban.Job.states() |> Enum.map(&to_string/1) |> Kernel.--(@terminal_states)
 
   def change_generation(params \\ %GenerationParams{}, attrs \\ %{}) do
     GenerationParams.changeset(params, attrs)
@@ -35,7 +43,10 @@ defmodule ShardHound.DemoData do
   def generation_status(generation_id) do
     states =
       Oban.Job
-      |> where([job], fragment("?->>'generation_id' = ?", job.args, ^generation_id))
+      |> where(
+        [job],
+        fragment("? @> ?", job.args, type(^%{"generation_id" => generation_id}, :map))
+      )
       |> group_by([job], job.state)
       |> select([job], {job.state, count(job.id)})
       |> Repo.all()
@@ -43,10 +54,20 @@ defmodule ShardHound.DemoData do
 
     %{
       total: Enum.sum(Map.values(states)),
-      active: sum_states(states, ~w(available scheduled executing retryable)),
+      active: sum_states(states, @active_states),
       completed: Map.get(states, "completed", 0),
       failed: sum_states(states, ~w(discarded cancelled)),
       states: states
+    }
+  end
+
+  def database_stats do
+    %{
+      organizations: Repo.aggregate(Organization, :count),
+      devices: Repo.aggregate(Device, :count),
+      software: Repo.aggregate(DeviceSoftware, :count),
+      groups: Repo.aggregate(Group, :count),
+      deployments: Repo.aggregate(Deployment, :count)
     }
   end
 

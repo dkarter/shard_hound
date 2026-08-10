@@ -1,6 +1,6 @@
 defmodule ShardHound.DemoData.GenerateDatasetWorker do
   use Oban.Worker,
-    queue: :data_generation,
+    queue: :data_generation_coordinator,
     max_attempts: 3,
     unique: [period: :infinity, fields: [:worker, :args], keys: [:generation_id]]
 

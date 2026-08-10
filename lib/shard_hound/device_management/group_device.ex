@@ -10,9 +10,9 @@ defmodule ShardHound.DeviceManagement.GroupDevice do
     timestamps(type: :utc_datetime)
   end
 
-  def changeset(group_device, attrs) do
+  def changeset(group_device) do
     group_device
-    |> cast(attrs, [])
+    |> cast(%{}, [])
     |> validate_required([:organization_id, :group_id, :device_id])
     |> unique_constraint([:organization_id, :group_id, :device_id])
   end

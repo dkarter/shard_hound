@@ -38,7 +38,7 @@ defmodule ShardHound.Repo.Migrations.CreateDeviceManagementTables do
       timestamps(type: :utc_datetime)
     end
 
-    create index(:devices, [:organization_id])
+    create unique_index(:devices, [:organization_id, :id])
     create unique_index(:devices, [:organization_id, :serial_number])
     create index(:devices, [:organization_id, :platform])
 
@@ -52,7 +52,7 @@ defmodule ShardHound.Repo.Migrations.CreateDeviceManagementTables do
       timestamps(type: :utc_datetime)
     end
 
-    create index(:groups, [:organization_id])
+    create unique_index(:groups, [:organization_id, :id])
     create unique_index(:groups, [:organization_id, :name])
 
     create table(:custom_packages) do
@@ -68,8 +68,6 @@ defmodule ShardHound.Repo.Migrations.CreateDeviceManagementTables do
       timestamps(type: :utc_datetime)
     end
 
-    create index(:custom_packages, [:organization_id])
-
     create unique_index(
              :custom_packages,
              [
@@ -83,7 +81,7 @@ defmodule ShardHound.Repo.Migrations.CreateDeviceManagementTables do
 
     create table(:device_software) do
       add :organization_id, references(:organizations, on_delete: :delete_all), null: false
-      add :device_id, references(:devices, on_delete: :delete_all), null: false
+      add :device_id, :bigint, null: false
       add :name, :string, null: false
       add :publisher, :string
       add :version, :string, null: false
@@ -94,7 +92,6 @@ defmodule ShardHound.Repo.Migrations.CreateDeviceManagementTables do
       timestamps(type: :utc_datetime)
     end
 
-    create index(:device_software, [:organization_id])
     create index(:device_software, [:organization_id, :device_id])
     create index(:device_software, [:organization_id, :name, :version])
 
@@ -110,19 +107,18 @@ defmodule ShardHound.Repo.Migrations.CreateDeviceManagementTables do
 
     create table(:group_devices) do
       add :organization_id, references(:organizations, on_delete: :delete_all), null: false
-      add :group_id, references(:groups, on_delete: :delete_all), null: false
-      add :device_id, references(:devices, on_delete: :delete_all), null: false
+      add :group_id, :bigint, null: false
+      add :device_id, :bigint, null: false
 
       timestamps(type: :utc_datetime)
     end
 
-    create index(:group_devices, [:organization_id])
     create index(:group_devices, [:organization_id, :device_id])
     create unique_index(:group_devices, [:organization_id, :group_id, :device_id])
 
     create table(:deployments) do
       add :organization_id, references(:organizations, on_delete: :delete_all), null: false
-      add :group_id, references(:groups, on_delete: :nilify_all)
+      add :group_id, :bigint
       add :package_id, :bigint, null: false
       add :package_type, :string, null: false
       add :name, :string, null: false
@@ -134,7 +130,6 @@ defmodule ShardHound.Repo.Migrations.CreateDeviceManagementTables do
       timestamps(type: :utc_datetime)
     end
 
-    create index(:deployments, [:organization_id])
     create index(:deployments, [:organization_id, :group_id])
     create index(:deployments, [:organization_id, :package_type, :package_id])
 
@@ -145,5 +140,41 @@ defmodule ShardHound.Repo.Migrations.CreateDeviceManagementTables do
     create constraint(:deployments, :deployments_status_check,
              check: "status IN ('pending', 'scheduled', 'running', 'completed', 'failed')"
            )
+
+    execute """
+            ALTER TABLE device_software
+            ADD CONSTRAINT device_software_organization_device_fkey
+            FOREIGN KEY (organization_id, device_id)
+            REFERENCES devices (organization_id, id)
+            ON DELETE CASCADE
+            """,
+            "ALTER TABLE device_software DROP CONSTRAINT device_software_organization_device_fkey"
+
+    execute """
+            ALTER TABLE group_devices
+            ADD CONSTRAINT group_devices_organization_group_fkey
+            FOREIGN KEY (organization_id, group_id)
+            REFERENCES groups (organization_id, id)
+            ON DELETE CASCADE
+            """,
+            "ALTER TABLE group_devices DROP CONSTRAINT group_devices_organization_group_fkey"
+
+    execute """
+            ALTER TABLE group_devices
+            ADD CONSTRAINT group_devices_organization_device_fkey
+            FOREIGN KEY (organization_id, device_id)
+            REFERENCES devices (organization_id, id)
+            ON DELETE CASCADE
+            """,
+            "ALTER TABLE group_devices DROP CONSTRAINT group_devices_organization_device_fkey"
+
+    execute """
+            ALTER TABLE deployments
+            ADD CONSTRAINT deployments_organization_group_fkey
+            FOREIGN KEY (organization_id, group_id)
+            REFERENCES groups (organization_id, id)
+            ON DELETE SET NULL (group_id)
+            """,
+            "ALTER TABLE deployments DROP CONSTRAINT deployments_organization_group_fkey"
   end
 end

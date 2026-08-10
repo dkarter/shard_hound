@@ -2,6 +2,26 @@ defmodule ShardHound.DemoData.GenerationParams do
   use Ecto.Schema
   import Ecto.Changeset
 
+  @count_fields [
+    %{name: :organizations, label: "Organizations", min: 1, max: 500},
+    %{name: :devices_per_organization, label: "Devices / organization", min: 1, max: 5_000},
+    %{name: :software_per_device, label: "Software / device", min: 1, max: 10},
+    %{name: :groups_per_organization, label: "Groups / organization", min: 1, max: 10},
+    %{
+      name: :custom_packages_per_organization,
+      label: "Custom packages / organization",
+      min: 0,
+      max: 50
+    },
+    %{
+      name: :deployments_per_organization,
+      label: "Deployments / organization",
+      min: 0,
+      max: 100
+    },
+    %{name: :managed_packages, label: "Shared managed packages", min: 1, max: 10}
+  ]
+
   @primary_key false
   embedded_schema do
     field :organizations, :integer, default: 5
@@ -13,33 +33,21 @@ defmodule ShardHound.DemoData.GenerationParams do
     field :managed_packages, :integer, default: 8
   end
 
+  def count_fields, do: @count_fields
+
   def changeset(params, attrs \\ %{}) do
+    fields = Enum.map(@count_fields, & &1.name)
+
     params
-    |> cast(attrs, [
-      :organizations,
-      :devices_per_organization,
-      :software_per_device,
-      :groups_per_organization,
-      :custom_packages_per_organization,
-      :deployments_per_organization,
-      :managed_packages
-    ])
-    |> validate_required([
-      :organizations,
-      :devices_per_organization,
-      :software_per_device,
-      :groups_per_organization,
-      :custom_packages_per_organization,
-      :deployments_per_organization,
-      :managed_packages
-    ])
+    |> cast(attrs, fields)
+    |> validate_required(fields)
     |> validate_number(:organizations, greater_than: 0, less_than_or_equal_to: 500)
     |> validate_number(:devices_per_organization,
       greater_than: 0,
       less_than_or_equal_to: 5_000
     )
-    |> validate_number(:software_per_device, greater_than: 0, less_than_or_equal_to: 25)
-    |> validate_number(:groups_per_organization, greater_than: 0, less_than_or_equal_to: 50)
+    |> validate_number(:software_per_device, greater_than: 0, less_than_or_equal_to: 10)
+    |> validate_number(:groups_per_organization, greater_than: 0, less_than_or_equal_to: 10)
     |> validate_number(:custom_packages_per_organization,
       greater_than_or_equal_to: 0,
       less_than_or_equal_to: 50
