@@ -77,7 +77,9 @@ defmodule ShardHound.Repo.Migrations.CreateDeviceManagementTables do
                :slug,
                :platform,
                :architecture
-             ], name: :custom_packages_org_slug_platform_arch_index)
+             ],
+             name: :custom_packages_org_slug_platform_arch_index
+           )
 
     create table(:device_software) do
       add :organization_id, references(:organizations, on_delete: :delete_all), null: false
@@ -102,7 +104,9 @@ defmodule ShardHound.Repo.Migrations.CreateDeviceManagementTables do
                :organization_id,
                :device_id,
                :bundle_identifier
-             ], name: :device_software_org_device_bundle_index)
+             ],
+             name: :device_software_org_device_bundle_index
+           )
 
     create table(:group_devices) do
       add :organization_id, references(:organizations, on_delete: :delete_all), null: false
