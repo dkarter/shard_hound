@@ -5,6 +5,7 @@ defmodule ShardHound.DeviceManagement.Organization do
   schema "organizations" do
     field :name, :string
     field :slug, :string
+    field :shard_id, :integer, default: 0
 
     has_many :devices, ShardHound.DeviceManagement.Device
     has_many :groups, ShardHound.DeviceManagement.Group

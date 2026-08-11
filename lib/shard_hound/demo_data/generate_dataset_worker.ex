@@ -4,6 +4,7 @@ defmodule ShardHound.DemoData.GenerateDatasetWorker do
     max_attempts: 3,
     unique: [period: :infinity, fields: [:worker, :args], keys: [:generation_id]]
 
+  alias ShardHound.DemoData
   alias ShardHound.DemoData.GenerateOrganizationWorker
   alias ShardHound.DeviceManagement.ShardHoundPackage
   alias ShardHound.Repo
@@ -58,6 +59,7 @@ defmodule ShardHound.DemoData.GenerateDatasetWorker do
     rows =
       Enum.map(packages, fn package ->
         %{
+          id: DemoData.stable_id("managed-package:#{package.slug}:universal:universal"),
           name: package.name,
           slug: package.slug,
           platform: "universal",

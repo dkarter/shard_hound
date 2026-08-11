@@ -58,6 +58,11 @@ if config_env() == :prod do
     # pool_count: 4,
     socket_options: maybe_ipv6
 
+  config :shard_hound, ShardHound.ObanRepo,
+    url: System.get_env("OBAN_DATABASE_URL") || database_url,
+    pool_size: String.to_integer(System.get_env("OBAN_POOL_SIZE") || "5"),
+    socket_options: maybe_ipv6
+
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
   # want to use a different value for prod and you most likely don't want

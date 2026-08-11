@@ -10,6 +10,7 @@ defmodule ShardHound.DemoData.GenerateOrganizationWorker do
 
   import Ecto.Query
 
+  alias ShardHound.DemoData
   alias ShardHound.DeviceManagement.CustomPackage
   alias ShardHound.DeviceManagement.Deployment
   alias ShardHound.DeviceManagement.Device
@@ -22,30 +23,59 @@ defmodule ShardHound.DemoData.GenerateOrganizationWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
-    case Repo.transaction(fn -> generate_organization(args) end, timeout: :infinity) do
-      {:ok, _organization} -> :ok
-      {:error, reason} -> {:error, reason}
+    organization = insert_organization(args)
+
+    if organization_data_exists?(organization.id) do
+      :ok
+    else
+      managed_packages = list_managed_packages(args)
+
+      case Repo.transaction(
+             fn ->
+               generate_organization_data(organization, managed_packages, args)
+             end,
+             timeout: :infinity
+           ) do
+        {:ok, _organization} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
-  defp generate_organization(args) do
-    now = DateTime.utc_now(:second)
+  defp insert_organization(args) do
     generation_id = args["generation_id"]
     display_key = String.slice(generation_id, 0, 8)
     organization_index = args["organization_index"]
+    shard_count = Application.fetch_env!(:shard_hound, :shard_count)
 
-    organization =
-      %Organization{
-        name: "Demo Organization #{display_key}-#{organization_index}",
-        slug: "demo-#{generation_id}-#{organization_index}"
-      }
-      |> Repo.insert!()
+    organization = %Organization{
+      id: DemoData.stable_id("organization:#{generation_id}:#{organization_index}"),
+      name: "Demo Organization #{display_key}-#{organization_index}",
+      slug: "demo-#{generation_id}-#{organization_index}",
+      shard_id: rem(organization_index - 1, shard_count)
+    }
+
+    Repo.insert!(organization,
+      conflict_target: :slug,
+      on_conflict: {:replace, [:name, :updated_at]},
+      returning: true
+    )
+  end
+
+  defp organization_data_exists?(organization_id) do
+    Repo.exists?(from device in Device, where: device.organization_id == ^organization_id)
+  end
+
+  defp generate_organization_data(organization, managed_packages, args) do
+    now = DateTime.utc_now(:second)
+
+    Repo.query!("SET LOCAL pgdog.sharding_key = '#{organization.id}'")
 
     devices = insert_devices(organization.id, args, now)
     memberships = insert_software(organization.id, devices, args, now)
     groups = insert_groups(organization.id, memberships, args, now)
     custom_packages = insert_custom_packages(organization.id, args, now)
-    insert_deployments(organization.id, groups, custom_packages, args, now)
+    insert_deployments(organization.id, groups, managed_packages, custom_packages, args, now)
 
     organization
   end
@@ -202,12 +232,14 @@ defmodule ShardHound.DemoData.GenerateOrganizationWorker do
     packages
   end
 
-  defp insert_deployments(organization_id, groups, custom_packages, args, now) do
-    managed_packages =
-      ShardHoundPackage
-      |> where([package], package.slug in ^Enum.map(args["package_definitions"], & &1["slug"]))
-      |> Repo.all()
-
+  defp insert_deployments(
+         organization_id,
+         groups,
+         managed_packages,
+         custom_packages,
+         args,
+         now
+       ) do
     rows =
       Range.new(1, args["deployments_per_organization"], 1)
       |> Enum.map(fn deployment_index ->
@@ -232,6 +264,11 @@ defmodule ShardHound.DemoData.GenerateOrganizationWorker do
       end)
 
     Repo.insert_all(Deployment, rows)
+  end
+
+  defp list_managed_packages(args) do
+    slugs = args["package_definitions"] |> Enum.map(& &1["slug"]) |> MapSet.new()
+    Enum.filter(Repo.all(ShardHoundPackage), &MapSet.member?(slugs, &1.slug))
   end
 
   defp deployment_package(index, managed_packages, custom_packages)

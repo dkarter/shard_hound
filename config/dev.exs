@@ -1,14 +1,27 @@
 import Config
 
+config :shard_hound, pgdog_enabled: true
+
 # Configure your database
 config :shard_hound, ShardHound.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  database: "shard_hound_dev",
+  username: System.get_env("DATABASE_USER", "postgres"),
+  password: System.get_env("DATABASE_PASSWORD", "postgres"),
+  hostname: System.get_env("DATABASE_HOST", "localhost"),
+  port: String.to_integer(System.get_env("DATABASE_PORT", "6432")),
+  database: System.get_env("DATABASE_NAME", "shard_hound_dev"),
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10
+
+config :shard_hound, ShardHound.ObanRepo,
+  username: "postgres",
+  password: "postgres",
+  hostname: "localhost",
+  port: 5432,
+  database: "shard_hound_dev",
+  stacktrace: true,
+  show_sensitive_data_on_connection_error: true,
+  pool_size: 5
 
 # For development, we disable any cache and enable
 # debugging and code reloading.

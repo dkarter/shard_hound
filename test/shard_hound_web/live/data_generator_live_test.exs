@@ -1,6 +1,6 @@
 defmodule ShardHoundWeb.DataGeneratorLiveTest do
   use ShardHoundWeb.ConnCase, async: false
-  use Oban.Testing, repo: ShardHound.Repo
+  use Oban.Testing, repo: ShardHound.ObanRepo
 
   import Phoenix.LiveViewTest
 

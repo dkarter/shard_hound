@@ -1,0 +1,45 @@
+[general]
+host = "0.0.0.0"
+port = 6432
+workers = 2
+default_pool_size = 10
+pooler_mode = "transaction"
+prepared_statements = "extended"
+query_parser = "on"
+auth_type = "trust"
+openmetrics_port = 9090
+openmetrics_namespace = "pgdog_"
+sharding_lookup_timeout = 5_000
+sharding_lookup_cache_size = 67_108_864
+
+[admin]
+user = "admin"
+password = "pgdog"
+
+[[databases]]
+name = "shard_hound_dev"
+host = "shard_0"
+port = 5432
+database_name = "shard_hound_dev"
+shard = 0
+role = "primary"
+
+[[databases]]
+name = "shard_hound_dev"
+host = "shard_1"
+port = 5432
+database_name = "shard_hound_dev"
+shard = 1
+role = "primary"
+
+[[omnisharded_tables]]
+database = "shard_hound_dev"
+tables = ["organizations", "shard_hound_packages"]
+sticky = false
+
+[[sharded_tables]]
+database = "shard_hound_dev"
+column = "organization_id"
+data_type = "bigint"
+lookup_query = "SELECT shard_id FROM organizations WHERE id = $1"
+lookup_result = "shard"

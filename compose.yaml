@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_USER: postgres
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d shard_hound_dev"]
       interval: 5s
@@ -15,5 +15,55 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql
 
+  shard_0:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: shard_hound_dev
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d shard_hound_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_shard_0_data:/var/lib/postgresql
+
+  shard_1:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: shard_hound_dev
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    ports:
+      - "127.0.0.1:5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d shard_hound_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_shard_1_data:/var/lib/postgresql
+
+  pgdog:
+    image: ghcr.io/pgdogdev/pgdog:v0.1.52
+    depends_on:
+      shard_0:
+        condition: service_healthy
+      shard_1:
+        condition: service_healthy
+    environment:
+      RUST_LOG: info
+    ports:
+      - "127.0.0.1:6432:6432"
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./docker/pgdog/pgdog.toml:/pgdog/pgdog.toml:ro
+      - ./docker/pgdog/users.toml:/pgdog/users.toml:ro
+
 volumes:
   postgres_data:
+  postgres_shard_0_data:
+  postgres_shard_1_data:

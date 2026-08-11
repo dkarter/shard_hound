@@ -6,7 +6,6 @@ defmodule ShardHound.DemoData do
   alias ShardHound.DeviceManagement.Deployment
   alias ShardHound.DeviceManagement.Device
   alias ShardHound.DeviceManagement.DeviceSoftware
-  alias ShardHound.DeviceManagement.Group
   alias ShardHound.DeviceManagement.Organization
   alias ShardHound.Repo
 
@@ -49,7 +48,7 @@ defmodule ShardHound.DemoData do
       )
       |> group_by([job], job.state)
       |> select([job], {job.state, count(job.id)})
-      |> Repo.all()
+      |> oban_repo().all()
       |> Map.new()
 
     %{
@@ -62,13 +61,43 @@ defmodule ShardHound.DemoData do
   end
 
   def database_stats do
-    %{
-      organizations: Repo.aggregate(Organization, :count),
-      devices: Repo.aggregate(Device, :count),
-      software: Repo.aggregate(DeviceSoftware, :count),
-      groups: Repo.aggregate(Group, :count),
-      deployments: Repo.aggregate(Deployment, :count)
-    }
+    if Application.fetch_env!(:shard_hound, :pgdog_enabled) do
+      %{
+        organizations: direct_count(Organization, 0),
+        devices: sharded_count(Device),
+        software: sharded_count(DeviceSoftware),
+        deployments: sharded_count(Deployment)
+      }
+    else
+      %{
+        organizations: Repo.aggregate(Organization, :count),
+        devices: Repo.aggregate(Device, :count),
+        software: Repo.aggregate(DeviceSoftware, :count),
+        deployments: Repo.aggregate(Deployment, :count)
+      }
+    end
+  end
+
+  defp sharded_count(schema) do
+    shard_count = Application.fetch_env!(:shard_hound, :shard_count)
+
+    Enum.reduce(0..(shard_count - 1), 0, fn shard, total ->
+      total + direct_count(schema, shard)
+    end)
+  end
+
+  defp direct_count(schema, shard) do
+    table = schema.__schema__(:source)
+
+    %{rows: [[count]]} =
+      Repo.query!("/* pgdog_shard: #{shard} */ SELECT count(*) FROM #{table}")
+
+    count
+  end
+
+  def stable_id(value) do
+    <<integer::unsigned-integer-size(64), _rest::binary>> = :crypto.hash(:sha256, value)
+    rem(integer, 9_223_372_036_854_775_806) + 1
   end
 
   defp empty_status do
@@ -77,5 +106,11 @@ defmodule ShardHound.DemoData do
 
   defp sum_states(states, names) do
     Enum.reduce(names, 0, &(&2 + Map.get(states, &1, 0)))
+  end
+
+  defp oban_repo do
+    :shard_hound
+    |> Application.fetch_env!(Oban)
+    |> Keyword.fetch!(:repo)
   end
 end

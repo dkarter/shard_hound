@@ -1,4 +1,4 @@
-defmodule ShardHound.Repo.Migrations.AddObanJobsTable do
+defmodule ShardHound.ObanRepo.Migrations.AddObanJobsTable do
   use Ecto.Migration
 
   def up do

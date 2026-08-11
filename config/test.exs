@@ -13,6 +13,14 @@ config :shard_hound, ShardHound.Repo,
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 
+config :shard_hound, ShardHound.ObanRepo,
+  username: "postgres",
+  password: "postgres",
+  hostname: "localhost",
+  database: "shard_hound_test#{System.get_env("MIX_TEST_PARTITION")}",
+  pool: Ecto.Adapters.SQL.Sandbox,
+  pool_size: 2
+
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
 config :shard_hound, ShardHoundWeb.Endpoint,

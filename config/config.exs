@@ -8,8 +8,10 @@
 import Config
 
 config :shard_hound,
-  ecto_repos: [ShardHound.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  ecto_repos: [ShardHound.Repo, ShardHound.ObanRepo],
+  generators: [timestamp_type: :utc_datetime],
+  pgdog_enabled: false,
+  shard_count: 2
 
 # Configure the endpoint
 config :shard_hound, ShardHoundWeb.Endpoint,
@@ -36,10 +38,12 @@ config :phoenix_live_view,
 # at the `config/runtime.exs`.
 config :shard_hound, ShardHound.Mailer, adapter: Swoosh.Adapters.Local
 
+config :shard_hound, ShardHound.ObanRepo, priv: "priv/oban_repo"
+
 config :shard_hound, Oban,
   engine: Oban.Engines.Basic,
   queues: [data_generation_coordinator: 1, data_generation: 2],
-  repo: ShardHound.Repo
+  repo: ShardHound.ObanRepo
 
 # Configure esbuild (the version is required)
 config :esbuild,

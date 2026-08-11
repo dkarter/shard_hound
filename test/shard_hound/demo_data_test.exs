@@ -1,6 +1,6 @@
 defmodule ShardHound.DemoDataTest do
   use ShardHound.DataCase, async: false
-  use Oban.Testing, repo: ShardHound.Repo
+  use Oban.Testing, repo: ShardHound.ObanRepo
 
   import Ecto.Query
 
@@ -43,12 +43,14 @@ defmodule ShardHound.DemoDataTest do
 
     assert :ok = perform_job(GenerateDatasetWorker, args)
     assert_enqueued(worker: GenerateOrganizationWorker, args: %{generation_id: generation_id})
+    assert ShardHound.DemoData.generation_status(generation_id).active == 1
 
     organization_job =
       Oban.Job
       |> where([job], job.worker == ^inspect(GenerateOrganizationWorker))
-      |> ShardHound.Repo.one!()
+      |> ShardHound.ObanRepo.one!()
 
+    assert :ok = perform_job(GenerateOrganizationWorker, organization_job.args)
     assert :ok = perform_job(GenerateOrganizationWorker, organization_job.args)
 
     organization = ShardHound.Repo.one!(Organization)
