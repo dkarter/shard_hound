@@ -1,15 +1,31 @@
 # PgDog lookup-routing demo
 
-This setup uses PgDog `v0.1.52`, which includes
-[PR #1279](https://github.com/pgdogdev/pgdog/pull/1279) and commit
-`f2ae21ce7239be7b7f4208b1750bae1b29f83b62`.
+This setup uses a PgDog built from the `move-keys` branch of
+[rlittlefield/pgdog](https://github.com/rlittlefield/pgdog) (the stack of PRs
+[#1](https://github.com/rlittlefield/pgdog/pull/1),
+[#2](https://github.com/rlittlefield/pgdog/pull/2) and
+[#3](https://github.com/rlittlefield/pgdog/pull/3)), which adds the `ADD SHARD`
+and `MOVE KEYS` topology commands on top of
+[PR #1279](https://github.com/pgdogdev/pgdog/pull/1279)'s lookup routing.
+Build the image once from a checkout of that branch:
 
-It starts four database-related services:
+```bash
+docker build -t pgdog:move-keys /path/to/pgdog
+```
 
-- `postgres`: an unsharded control database used by Oban
+See [`docs/resharding.md`](resharding.md) for the resharding experiments.
+
+It starts the database services:
+
+- `postgres`: an unsharded control database used by Oban, exposed on port `5436`
 - `shard_0`: PostgreSQL 18, exposed directly on port `5433`
 - `shard_1`: PostgreSQL 18, exposed directly on port `5434`
-- `pgdog`: the application endpoint on port `6432`, with metrics on `9090`
+- `shard_2`–`shard_4`: PostgreSQL 18 on ports `5435`, `5437`, `5438`; empty
+  future shards, activated one at a time by `ADD SHARD`
+- `pgdog`: the application endpoint on port `6433`, with metrics on `9091`
+
+Host ports avoid `5432`, `6432` and `9090` because the local k3s cluster forwards those to its
+own stack.
 
 The Phoenix Repo uses PgDog by default in development. Oban uses the control database directly
 because queue state must not be broadcast or independently duplicated across shards.
@@ -33,8 +49,20 @@ DATABASE_PORT=5434 mix ecto.migrate -r ShardHound.Repo
 mix ecto.migrate -r ShardHound.ObanRepo
 ```
 
-Start Phoenix. Its domain Repo connects to PgDog on port `6432`; its Oban Repo connects to the
-control database on port `5432`.
+Give each shard's tenant id sequences a disjoint range, so rows can move between shards without
+primary key collisions (see [`docs/resharding.md`](resharding.md)):
+
+```bash
+DATABASE_PORT=5433 mix shard_hound.sequence_ranges --shard 0
+DATABASE_PORT=5434 mix shard_hound.sequence_ranges --shard 1
+```
+
+Do not migrate the future shards (2–4): `ADD SHARD` provisions each from
+shard 0, and the UI adopts its migration ledger, sequence range and placement
+row on activation.
+
+Start Phoenix. Its domain Repo connects to PgDog on port `6433`; its Oban Repo connects to the
+control database on port `5436`.
 
 ```bash
 mix phx.server
@@ -118,7 +146,7 @@ PgDog rejects it rather than hashing it or choosing an arbitrary shard.
 Lookup cache and query metrics are exposed by PgDog:
 
 ```bash
-curl -s http://localhost:9090/metrics | rg sharding_lookup
+curl -s http://localhost:9091/metrics | rg sharding_lookup
 ```
 
 Useful logs are available with:

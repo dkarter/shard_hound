@@ -35,3 +35,4 @@ shard_hound-*.tar
 npm-debug.log
 /assets/node_modules/
 
+.docker-config/

@@ -3,6 +3,9 @@ defmodule ShardHoundWeb.DataGeneratorLive do
 
   alias ShardHound.DemoData
   alias ShardHound.DemoData.GenerationParams
+  alias ShardHound.PgDog
+  alias ShardHound.Shards
+  alias ShardHound.Topology
 
   @impl true
   def mount(_params, _session, socket) do
@@ -13,10 +16,20 @@ defmodule ShardHoundWeb.DataGeneratorLive do
      |> assign(:page_title, "Dataset Generator")
      |> assign(:generation_id, nil)
      |> assign(:refresh_ref, nil)
+     |> assign(:counts_ref, nil)
      |> assign(:generation_status, DemoData.generation_status(nil))
      |> assign(:database_stats, DemoData.database_stats())
      |> assign(:estimate, estimate(params))
-     |> assign(:form, to_form(DemoData.change_generation(params)))}
+     |> assign(:form, to_form(DemoData.change_generation(params)))
+     |> assign(:audit, nil)
+     |> assign(:pgdog_enabled, Application.fetch_env!(:shard_hound, :pgdog_enabled))
+     |> assign(:shard_ids, Topology.shard_ids())
+     |> assign(:organizations, DemoData.organizations_with_shards())
+     |> refresh_shards_panel()
+     |> assign(:selected_org_ids, MapSet.new())
+     |> assign(:move_target, "1")
+     |> assign(:admin_task, nil)
+     |> refresh_counts()}
   end
 
   @impl true
@@ -51,6 +64,82 @@ defmodule ShardHoundWeb.DataGeneratorLive do
     end
   end
 
+  def handle_event("reset", _params, socket) do
+    :ok = DemoData.reset_demo_data()
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Demo data cleared on every shard.")
+     |> cancel_refresh()
+     |> assign(:generation_id, nil)
+     |> assign(:generation_status, DemoData.generation_status(nil))
+     |> assign(:database_stats, DemoData.database_stats())
+     |> assign(:organizations, DemoData.organizations_with_shards())
+     |> refresh_shards_panel()
+     |> refresh_counts()}
+  end
+
+  def handle_event("refresh_counts", _params, socket) do
+    {:noreply, refresh_counts(socket)}
+  end
+
+  def handle_event("audit", _params, socket) do
+    {:noreply, assign(socket, :audit, DemoData.audit_placement())}
+  end
+
+  def handle_event("move_selection", params, socket) do
+    {:noreply,
+     socket
+     |> assign(:selected_org_ids, MapSet.new(Map.get(params, "org_ids", [])))
+     |> assign(:move_target, params["target_shard"] || socket.assigns.move_target)}
+  end
+
+  def handle_event("move_shard", params, socket) do
+    keys = Map.get(params, "org_ids", [])
+    target = String.to_integer(params["target_shard"])
+
+    case PgDog.Admin.move_keys(target, keys) do
+      {:ok, task_id} ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :info,
+           "MOVE KEYS task #{task_id} started: #{length(keys)} organization(s) to shard #{target} (AUTO)."
+         )
+         |> assign(:selected_org_ids, MapSet.new())
+         |> track_admin_task(:move_keys, task_id)}
+
+      {:error, message} ->
+        {:noreply, put_flash(socket, :error, "MOVE KEYS refused: #{message}")}
+    end
+  end
+
+  def handle_event("add_shard", _params, socket) do
+    shard = Topology.next_shard()
+
+    case PgDog.Admin.add_shard(shard) do
+      {:ok, task_id} ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :info,
+           "ADD SHARD task #{task_id} started: provisioning shard #{shard} (AUTO)."
+         )
+         |> track_admin_task({:add_shard, shard}, task_id)}
+
+      {:error, message} ->
+        {:noreply, put_flash(socket, :error, "ADD SHARD refused: #{message}")}
+    end
+  end
+
+  def handle_event("toggle_shard", %{"shard" => shard}, socket) do
+    shard = String.to_integer(shard)
+    row = Enum.find(socket.assigns.policy_shards, &(&1.shard_id == shard))
+    :ok = Shards.set_enabled(shard, !row.enabled_for_new_orgs)
+
+    {:noreply, refresh_shards_panel(socket)}
+  end
+
   @impl true
   def handle_info(
         {:refresh_generation, generation_id},
@@ -63,13 +152,130 @@ defmodule ShardHoundWeb.DataGeneratorLive do
       if status.active > 0 do
         schedule_refresh(socket)
       else
-        assign(socket, :database_stats, DemoData.database_stats())
+        socket
+        |> assign(:database_stats, DemoData.database_stats())
+        |> assign(:organizations, DemoData.organizations_with_shards())
+        |> refresh_shards_panel()
       end
 
     {:noreply, assign(socket, :generation_status, status)}
   end
 
   def handle_info({:refresh_generation, _stale_generation_id}, socket), do: {:noreply, socket}
+
+  def handle_info(:refresh_counts, socket), do: {:noreply, refresh_counts(socket)}
+
+  def handle_info(:poll_admin_task, %{assigns: %{admin_task: nil}} = socket),
+    do: {:noreply, socket}
+
+  def handle_info(:poll_admin_task, socket) do
+    task = socket.assigns.admin_task
+    root = task_row(task.id)
+
+    cond do
+      root != nil and root["status"] == "running" and task.polls < 300 ->
+        Process.send_after(self(), :poll_admin_task, 1_000)
+
+        {:noreply,
+         assign(socket, :admin_task, %{
+           task
+           | status: root["status"],
+             inner_status: root["inner_status"],
+             polls: task.polls + 1
+         })}
+
+      true ->
+        outcome = if root, do: root["status"], else: "finished"
+
+        {:noreply,
+         socket
+         |> assign(:admin_task, nil)
+         |> finish_admin_task(task, outcome)}
+    end
+  end
+
+  defp track_admin_task(socket, kind, task_id) do
+    Process.send_after(self(), :poll_admin_task, 1_000)
+
+    assign(socket, :admin_task, %{
+      id: task_id,
+      kind: kind,
+      status: "running",
+      inner_status: nil,
+      polls: 0
+    })
+  end
+
+  # A finished ADD SHARD leaves a live shard with a synced schema but
+  # no migration ledger, blank sequences and no placement row: adopt
+  # the ledger, give its sequences their disjoint range and register
+  # it for new organizations before anything lands on it.
+  defp finish_admin_task(socket, %{kind: {:add_shard, shard}}, "finished") do
+    :ok = Topology.adopt_schema_migrations(shard)
+    :ok = DemoData.ensure_replica_identities()
+    :ok = DemoData.apply_sequence_ranges(shard)
+    :ok = Shards.register(shard)
+
+    socket
+    |> put_flash(
+      :info,
+      "ADD SHARD finished: shard #{shard} is live, sequenced, and enabled for new organizations."
+    )
+    |> refresh_topology()
+  end
+
+  defp finish_admin_task(socket, task, outcome) do
+    flash_kind = if outcome == "finished", do: :info, else: :error
+
+    socket
+    |> put_flash(flash_kind, "#{task_label(task.kind)} task #{task.id} #{outcome}.")
+    |> refresh_topology()
+  end
+
+  defp refresh_topology(socket) do
+    socket
+    |> assign(:shard_ids, Topology.shard_ids())
+    |> refresh_shards_panel()
+    |> assign(:organizations, DemoData.organizations_with_shards())
+    |> refresh_counts()
+  end
+
+  defp refresh_shards_panel(socket) do
+    socket
+    |> assign(:policy_shards, Shards.list())
+    |> assign(:org_counts, Shards.organization_counts())
+  end
+
+  defp task_label(:move_keys), do: "MOVE KEYS"
+  defp task_label({:add_shard, _shard}), do: "ADD SHARD"
+
+  defp task_row(task_id) do
+    case PgDog.Admin.tasks() do
+      {:ok, rows} ->
+        Enum.find(rows, fn row ->
+          row["scope"] == "root" and row["id"] == to_string(task_id)
+        end)
+
+      {:error, _message} ->
+        nil
+    end
+  end
+
+  # Recounts every table on every shard and restarts the once-a-minute
+  # timer, so a manual refresh also pushes the next automatic one out.
+  defp refresh_counts(socket) do
+    if socket.assigns.counts_ref, do: Process.cancel_timer(socket.assigns.counts_ref)
+
+    counts_ref =
+      if connected?(socket) do
+        Process.send_after(self(), :refresh_counts, 60_000)
+      end
+
+    socket
+    |> assign(:shard_counts, DemoData.shard_table_counts())
+    |> assign(:counts_updated_at, DateTime.utc_now(:second))
+    |> assign(:counts_ref, counts_ref)
+  end
 
   defp schedule_refresh(socket) do
     refresh_ref =
@@ -123,11 +329,23 @@ defmodule ShardHoundWeb.DataGeneratorLive do
             </p>
           </div>
 
-          <div class="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-white/8 bg-white/8 shadow-2xl shadow-black/20">
-            <.stat value={@database_stats.organizations} label="Organizations" />
-            <.stat value={@database_stats.devices} label="Devices" />
-            <.stat value={@database_stats.software} label="Software rows" />
-            <.stat value={@database_stats.deployments} label="Deployments" />
+          <div class="space-y-2">
+            <div class="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-white/8 bg-white/8 shadow-2xl shadow-black/20">
+              <.stat value={@database_stats.organizations} label="Organizations" />
+              <.stat value={@database_stats.devices} label="Devices" />
+              <.stat value={@database_stats.software} label="Software rows" />
+              <.stat value={@database_stats.deployments} label="Deployments" />
+            </div>
+            <button
+              id="reset-data-button"
+              type="button"
+              phx-click="reset"
+              data-confirm="Delete all demo data on every shard? Queued generation jobs are cancelled too."
+              phx-disable-with="Resetting..."
+              class="inline-flex w-full min-h-9 items-center justify-center gap-2 rounded-xl border border-rose-400/25 bg-rose-400/5 px-4 text-xs font-semibold text-rose-200 transition hover:border-rose-400/50 hover:bg-rose-400/10 disabled:cursor-wait disabled:opacity-70"
+            >
+              <.icon name="hero-arrow-path" class="size-3.5" /> Reset all demo data
+            </button>
           </div>
         </div>
 
@@ -245,8 +463,332 @@ defmodule ShardHoundWeb.DataGeneratorLive do
             </div>
           </aside>
         </div>
+
+        <div
+          id="shard-counts"
+          class="overflow-hidden rounded-3xl border border-white/8 bg-[#0c1220]/95 shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-4 border-b border-white/8 px-6 py-5 sm:px-8">
+            <div>
+              <h2 class="text-lg font-semibold text-white">Rows per shard</h2>
+              <p class="mt-1 text-sm text-slate-500">
+                One direct count per shard and table. Updated
+                <span class="tabular-nums text-slate-300">
+                  {Calendar.strftime(@counts_updated_at, "%H:%M:%S")} UTC
+                </span>
+                — refreshes every minute.
+              </p>
+            </div>
+            <button
+              id="refresh-counts-button"
+              type="button"
+              phx-click="refresh_counts"
+              phx-disable-with="Counting..."
+              class="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-slate-200 transition hover:border-cyan-300/40 hover:text-cyan-200 disabled:cursor-wait disabled:opacity-70"
+            >
+              <.icon name="hero-arrow-path" class="size-4" /> Refresh now
+            </button>
+          </div>
+          <div class="overflow-x-auto px-6 py-4 sm:px-8">
+            <table class="w-full min-w-[28rem] text-sm">
+              <thead>
+                <tr class="text-xs uppercase tracking-wider text-slate-500">
+                  <th class="py-2 pr-4 text-left font-semibold">Table</th>
+                  <th
+                    :for={shard <- @shard_counts.shards}
+                    class="py-2 pl-4 text-right font-semibold"
+                  >
+                    {shard_label(shard)}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr :for={row <- @shard_counts.rows} class="border-t border-white/5">
+                  <td class="py-2.5 pr-4 font-mono text-xs text-slate-300">
+                    {row.table}
+                    <span
+                      :if={row.omni}
+                      class="ml-2 rounded-full border border-violet-300/20 bg-violet-300/10 px-2 py-0.5 text-[10px] font-semibold text-violet-200"
+                      title="Broadcast to every shard; counts match by design"
+                    >
+                      omni
+                    </span>
+                  </td>
+                  <td
+                    :for={count <- row.counts}
+                    class="py-2.5 pl-4 text-right tabular-nums text-slate-200"
+                  >
+                    {format_number(count)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div
+          :if={@pgdog_enabled}
+          id="shards-panel"
+          class="overflow-hidden rounded-3xl border border-white/8 bg-[#0c1220]/95 shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-4 border-b border-white/8 px-6 py-5 sm:px-8">
+            <div>
+              <h2 class="text-lg font-semibold text-white">Shards</h2>
+              <p class="mt-1 text-sm text-slate-500">
+                The serving topology, and which shards accept new organizations.
+                <span class="font-mono text-xs text-slate-400">ADD SHARD &hellip; AUTO</span>
+                activates the next declared shard: schema, omni data, WAL catch-up, cutover.
+              </p>
+            </div>
+            <div class="flex items-center gap-3">
+              <.task_chip id="shards-task-status" task={@admin_task} />
+              <button
+                id="add-shard-button"
+                type="button"
+                phx-click="add_shard"
+                data-confirm={"Activate shard #{length(@shard_ids)}? Activation is permanent: once tenants land on it, the only way off is MOVE KEYS."}
+                disabled={@admin_task != nil}
+                phx-disable-with="Provisioning..."
+                class="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-cyan-300 px-5 text-xs font-bold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-200 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                ADD SHARD {length(@shard_ids)}
+              </button>
+            </div>
+          </div>
+          <div class="px-6 py-4 sm:px-8">
+            <table class="w-full min-w-[24rem] text-sm">
+              <thead>
+                <tr class="text-xs uppercase tracking-wider text-slate-500">
+                  <th class="py-2 pr-4 text-left font-semibold">Shard</th>
+                  <th class="py-2 pr-4 text-left font-semibold">Status</th>
+                  <th class="py-2 pr-4 text-right font-semibold">Organizations</th>
+                  <th class="py-2 pl-4 text-right font-semibold">New organizations</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr :for={row <- @policy_shards} class="border-t border-white/5">
+                  <td class="py-2.5 pr-4 font-mono text-xs text-slate-200">
+                    shard {row.shard_id}
+                  </td>
+                  <td class="py-2.5 pr-4">
+                    <span class={[
+                      "rounded-full border px-2.5 py-1 font-mono text-[11px]",
+                      (row.shard_id in @shard_ids &&
+                         "border-emerald-300/20 bg-emerald-300/10 text-emerald-200") ||
+                        "border-amber-300/20 bg-amber-300/10 text-amber-200"
+                    ]}>
+                      {if row.shard_id in @shard_ids, do: "serving", else: "not serving"}
+                    </span>
+                  </td>
+                  <td class="py-2.5 pr-4 text-right tabular-nums text-slate-200">
+                    {format_number(Map.get(@org_counts, row.shard_id, 0))}
+                  </td>
+                  <td class="py-2.5 pl-4 text-right">
+                    <label class="inline-flex cursor-pointer items-center gap-2 text-xs text-slate-400">
+                      {if row.enabled_for_new_orgs, do: "enabled", else: "disabled"}
+                      <input
+                        id={"shard-toggle-#{row.shard_id}"}
+                        type="checkbox"
+                        checked={row.enabled_for_new_orgs}
+                        phx-click="toggle_shard"
+                        phx-value-shard={row.shard_id}
+                        class="toggle toggle-sm border-white/20 bg-[#070b14] checked:border-cyan-300/60 checked:bg-cyan-300/30"
+                      />
+                    </label>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div
+          :if={@pgdog_enabled}
+          id="move-keys"
+          class="overflow-hidden rounded-3xl border border-white/8 bg-[#0c1220]/95 shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-4 border-b border-white/8 px-6 py-5 sm:px-8">
+            <div>
+              <h2 class="text-lg font-semibold text-white">Move organizations</h2>
+              <p class="mt-1 text-sm text-slate-500">
+                One <span class="font-mono text-xs text-slate-400">MOVE KEYS &hellip; AUTO</span>
+                call for every selected organization: copy, catch up, cut over. All selections
+                must live on the same shard, and not on the target.
+              </p>
+            </div>
+            <.task_chip id="move-task-status" task={@admin_task} />
+          </div>
+
+          <form id="move-keys-form" phx-change="move_selection" phx-submit="move_shard">
+            <div class="max-h-80 overflow-y-auto px-6 py-4 sm:px-8">
+              <p :if={@organizations == []} class="py-4 text-sm text-slate-500">
+                No organizations yet. Generate a dataset first.
+              </p>
+              <table :if={@organizations != []} class="w-full min-w-[24rem] text-sm">
+                <thead>
+                  <tr class="text-xs uppercase tracking-wider text-slate-500">
+                    <th class="w-10 py-2"></th>
+                    <th class="py-2 pr-4 text-left font-semibold">Organization</th>
+                    <th class="py-2 pl-4 text-right font-semibold">Shard</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr :for={org <- @organizations} class="border-t border-white/5">
+                    <td class="py-2.5">
+                      <input
+                        id={"move-org-#{org.id}"}
+                        type="checkbox"
+                        name="org_ids[]"
+                        value={org.id}
+                        checked={MapSet.member?(@selected_org_ids, to_string(org.id))}
+                        class="size-4 rounded border-white/20 bg-[#070b14] text-cyan-300 focus:ring-cyan-300/40"
+                      />
+                    </td>
+                    <td class="py-2.5 pr-4">
+                      <label for={"move-org-#{org.id}"} class="cursor-pointer">
+                        <span class="text-slate-200">{org.name}</span>
+                        <span class="ml-2 font-mono text-[11px] text-slate-600">{org.id}</span>
+                      </label>
+                    </td>
+                    <td class="py-2.5 pl-4 text-right">
+                      <span class="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 font-mono text-[11px] text-slate-300">
+                        shard {org.shard_id}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-4 border-t border-white/8 px-6 py-5 sm:px-8">
+              <label class="flex items-center gap-3 text-sm text-slate-400">
+                Target
+                <select
+                  name="target_shard"
+                  class="rounded-xl border border-white/10 bg-[#070b14] px-3 py-2 text-sm font-medium text-white outline-none focus:border-cyan-300/60"
+                >
+                  <option
+                    :for={shard <- @shard_ids}
+                    value={shard}
+                    selected={to_string(shard) == @move_target}
+                  >
+                    shard {shard}
+                  </option>
+                </select>
+              </label>
+              <.button
+                id="move-shard-button"
+                type="submit"
+                disabled={MapSet.size(@selected_org_ids) == 0 or @admin_task != nil}
+                phx-disable-with="Moving..."
+                class="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-violet-300 px-6 text-sm font-bold text-slate-950 transition hover:-translate-y-0.5 hover:bg-violet-200 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                MOVE SHARD
+                <span :if={MapSet.size(@selected_org_ids) > 0}>
+                  ({MapSet.size(@selected_org_ids)})
+                </span>
+              </.button>
+            </div>
+          </form>
+        </div>
+
+        <div
+          id="placement-audit"
+          class="overflow-hidden rounded-3xl border border-white/8 bg-[#0c1220]/95 shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-4 border-b border-white/8 px-6 py-5 sm:px-8">
+            <div>
+              <h2 class="text-lg font-semibold text-white">Placement audit</h2>
+              <p class="mt-1 text-sm text-slate-500">
+                Confirms every tenant row lives on the shard its organization is placed on.
+                Runs only on demand. Rows copied by an in-flight MOVE KEYS task count as
+                strays until its cutover.
+              </p>
+            </div>
+            <button
+              id="run-audit-button"
+              type="button"
+              phx-click="audit"
+              phx-disable-with="Auditing..."
+              class="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-slate-200 transition hover:border-cyan-300/40 hover:text-cyan-200 disabled:cursor-wait disabled:opacity-70"
+            >
+              <.icon name="hero-shield-check" class="size-4" /> Run audit
+            </button>
+          </div>
+
+          <div :if={@audit} id="audit-results" class="px-6 py-5 sm:px-8">
+            <div class="flex flex-wrap items-center gap-3">
+              <span class={[
+                "grid size-9 place-items-center rounded-xl",
+                @audit.problems == [] && "bg-emerald-300/10 text-emerald-300",
+                @audit.problems != [] && "bg-rose-400/10 text-rose-300"
+              ]}>
+                <.icon
+                  name={
+                    if @audit.problems == [],
+                      do: "hero-check-circle",
+                      else: "hero-exclamation-triangle"
+                  }
+                  class="size-5"
+                />
+              </span>
+              <div>
+                <div class="text-sm font-semibold text-white">
+                  {format_number(@audit.clean)} of {format_number(@audit.total)} organizations with no problems detected
+                </div>
+                <div class="text-xs text-slate-500">
+                  Audited at {Calendar.strftime(@audit.audited_at, "%H:%M:%S")} UTC
+                </div>
+              </div>
+            </div>
+
+            <ul :if={@audit.problems != []} class="mt-5 space-y-3">
+              <li
+                :for={problem <- @audit.problems}
+                class="rounded-2xl border border-rose-400/15 bg-rose-400/[0.04] px-4 py-3"
+              >
+                <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span class="text-sm font-semibold text-rose-100">{problem.name}</span>
+                  <span class="font-mono text-[11px] text-slate-500">id {problem.id}</span>
+                  <span class="text-xs text-slate-400">
+                    placed on shard {problem.expected_shard}
+                  </span>
+                </div>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <span
+                    :for={row <- problem.rows}
+                    class="rounded-full border border-rose-400/20 bg-rose-400/10 px-2.5 py-1 font-mono text-[11px] text-rose-200"
+                  >
+                    {format_number(row.count)} × {row.table} on shard {row.shard}
+                  </span>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
       </section>
     </Layouts.app>
+    """
+  end
+
+  defp shard_label(nil), do: "Database"
+  defp shard_label(shard), do: "Shard #{shard}"
+
+  attr :id, :string, required: true
+  attr :task, :map, required: true
+
+  defp task_chip(assigns) do
+    ~H"""
+    <div
+      :if={@task}
+      id={@id}
+      class="flex items-center gap-2 rounded-xl border border-cyan-300/20 bg-cyan-300/5 px-4 py-2 text-xs text-cyan-100"
+    >
+      <span class="relative flex size-2.5">
+        <span class="absolute inline-flex size-full animate-ping rounded-full bg-cyan-300 opacity-60"></span>
+        <span class="relative inline-flex size-2.5 rounded-full bg-cyan-300"></span>
+      </span>
+      task {@task.id}: {@task.inner_status || @task.status}
+    </div>
     """
   end
 
