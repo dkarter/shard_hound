@@ -109,6 +109,24 @@ defmodule ShardHoundWeb.DataGeneratorLive do
      |> assign(:selected_org_ids, MapSet.new())}
   end
 
+  # Toggles the whole current origin tab: select every organization on
+  # it, or clear the selection if they're all already selected.
+  def handle_event("move_select_all", _params, socket) do
+    ids =
+      socket.assigns.organizations
+      |> source_orgs(socket.assigns.move_source)
+      |> MapSet.new(&to_string(&1.id))
+
+    selected =
+      if MapSet.subset?(ids, socket.assigns.selected_org_ids) do
+        MapSet.new()
+      else
+        ids
+      end
+
+    {:noreply, assign(socket, :selected_org_ids, selected)}
+  end
+
   def handle_event("move_selection", params, socket) do
     {:noreply,
      socket
@@ -667,24 +685,33 @@ defmodule ShardHoundWeb.DataGeneratorLive do
           <form id="move-keys-form" phx-change="move_selection" phx-submit="move_shard">
             <div class="max-h-80 overflow-y-auto px-6 py-4 sm:px-8">
               <p
-                :if={not Enum.any?(@organizations, &(&1.shard_id == @move_source))}
+                :if={source_orgs(@organizations, @move_source) == []}
                 class="py-4 text-sm text-slate-500"
               >
                 No organizations on shard {@move_source}.
               </p>
               <table
-                :if={Enum.any?(@organizations, &(&1.shard_id == @move_source))}
+                :if={source_orgs(@organizations, @move_source) != []}
                 class="w-full min-w-[24rem] text-sm"
               >
                 <thead>
                   <tr class="text-xs uppercase tracking-wider text-slate-500">
-                    <th class="w-10 py-2"></th>
+                    <th class="w-10 py-2">
+                      <input
+                        id="move-select-all"
+                        type="checkbox"
+                        checked={all_selected?(@organizations, @move_source, @selected_org_ids)}
+                        phx-click="move_select_all"
+                        title="Select every organization on this shard"
+                        class="size-4 rounded border-white/20 bg-[#070b14] text-cyan-300 focus:ring-cyan-300/40"
+                      />
+                    </th>
                     <th class="py-2 pr-4 text-left font-semibold">Organization</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr
-                    :for={org <- Enum.filter(@organizations, &(&1.shard_id == @move_source))}
+                    :for={org <- source_orgs(@organizations, @move_source)}
                     class="border-t border-white/5"
                   >
                     <td class="py-2.5">
@@ -822,6 +849,15 @@ defmodule ShardHoundWeb.DataGeneratorLive do
 
   defp shard_label(nil), do: "Database"
   defp shard_label(shard), do: "Shard #{shard}"
+
+  defp source_orgs(organizations, source) do
+    Enum.filter(organizations, &(&1.shard_id == source))
+  end
+
+  defp all_selected?(organizations, source, selected) do
+    orgs = source_orgs(organizations, source)
+    orgs != [] and Enum.all?(orgs, &MapSet.member?(selected, to_string(&1.id)))
+  end
 
   attr :id, :string, required: true
   attr :task, :map, required: true
