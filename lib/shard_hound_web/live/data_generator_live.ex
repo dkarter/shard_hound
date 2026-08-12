@@ -700,8 +700,9 @@ defmodule ShardHoundWeb.DataGeneratorLive do
                       <input
                         id="move-select-all"
                         type="checkbox"
+                        name="select_all"
                         checked={all_selected?(@organizations, @move_source, @selected_org_ids)}
-                        phx-click="move_select_all"
+                        phx-change="move_select_all"
                         title="Select every organization on this shard"
                         class="size-4 rounded border-white/20 bg-[#070b14] text-cyan-300 focus:ring-cyan-300/40"
                       />
