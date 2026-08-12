@@ -7,17 +7,25 @@ config :shard_hound, ShardHound.Repo,
   username: System.get_env("DATABASE_USER", "postgres"),
   password: System.get_env("DATABASE_PASSWORD", "postgres"),
   hostname: System.get_env("DATABASE_HOST", "localhost"),
-  port: String.to_integer(System.get_env("DATABASE_PORT", "6432")),
+  port: String.to_integer(System.get_env("DATABASE_PORT", "6433")),
   database: System.get_env("DATABASE_NAME", "shard_hound_dev"),
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10
 
+# PgDog's admin database, for topology commands (MOVE KEYS, SHOW TASKS)
+config :shard_hound, :pgdog_admin,
+  hostname: System.get_env("DATABASE_HOST", "localhost"),
+  port: String.to_integer(System.get_env("DATABASE_PORT", "6433")),
+  username: "admin",
+  password: "pgdog",
+  database: "admin"
+
 config :shard_hound, ShardHound.ObanRepo,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
-  port: 5432,
+  port: String.to_integer(System.get_env("OBAN_DATABASE_PORT", "5436")),
   database: "shard_hound_dev",
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,

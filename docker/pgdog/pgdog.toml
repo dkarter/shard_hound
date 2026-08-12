@@ -11,6 +11,10 @@ openmetrics_port = 9090
 openmetrics_namespace = "pgdog_"
 sharding_lookup_timeout = 5_000
 sharding_lookup_cache_size = 67_108_864
+# Text COPY: the binary format assumes 8-byte ints and breaks on the
+# integer columns (organizations.shard_id, shards.shard_id) during
+# ADD SHARD's omni data sync.
+resharding_copy_format = "text"
 
 [admin]
 user = "admin"
@@ -32,9 +36,43 @@ database_name = "shard_hound_dev"
 shard = 1
 role = "primary"
 
+# Future shards, declared in their final shape. `provisioning = true`
+# keeps each out of the serving topology until `ADD SHARD
+# shard_hound_dev <n>` syncs it and its cutover activates it (in
+# order: 2, then 3, then 4). This config is mounted read-only, so the
+# flag stays in the file after activation; pgdog reconciles against
+# the `pgdog.config` marker on the shard itself at startup and after
+# RELOAD.
+[[databases]]
+name = "shard_hound_dev"
+host = "shard_2"
+port = 5432
+database_name = "shard_hound_dev"
+shard = 2
+role = "primary"
+provisioning = true
+
+[[databases]]
+name = "shard_hound_dev"
+host = "shard_3"
+port = 5432
+database_name = "shard_hound_dev"
+shard = 3
+role = "primary"
+provisioning = true
+
+[[databases]]
+name = "shard_hound_dev"
+host = "shard_4"
+port = 5432
+database_name = "shard_hound_dev"
+shard = 4
+role = "primary"
+provisioning = true
+
 [[omnisharded_tables]]
 database = "shard_hound_dev"
-tables = ["organizations", "shard_hound_packages"]
+tables = ["organizations", "shard_hound_packages", "shards"]
 sticky = false
 
 [[sharded_tables]]
@@ -43,3 +81,6 @@ column = "organization_id"
 data_type = "bigint"
 lookup_query = "SELECT shard_id FROM organizations WHERE id = $1"
 lookup_result = "shard"
+# MOVE KEYS flips a tenant's placement by running this on every shard
+# at the cutover: $1 is the organization id, $2 the new shard number.
+move_query = "UPDATE organizations SET shard_id = $2 WHERE id = $1"

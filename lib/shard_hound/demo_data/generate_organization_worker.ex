@@ -46,13 +46,16 @@ defmodule ShardHound.DemoData.GenerateOrganizationWorker do
     generation_id = args["generation_id"]
     display_key = String.slice(generation_id, 0, 8)
     organization_index = args["organization_index"]
-    shard_count = Application.fetch_env!(:shard_hound, :shard_count)
+
+    # Placement policy: round-robin over the shards enabled for new
+    # organizations in the omnisharded shards table.
+    enabled_shards = ShardHound.Shards.enabled_shard_ids()
 
     organization = %Organization{
       id: DemoData.stable_id("organization:#{generation_id}:#{organization_index}"),
       name: "Demo Organization #{display_key}-#{organization_index}",
       slug: "demo-#{generation_id}-#{organization_index}",
-      shard_id: rem(organization_index - 1, shard_count)
+      shard_id: Enum.at(enabled_shards, rem(organization_index - 1, length(enabled_shards)))
     }
 
     Repo.insert!(organization,

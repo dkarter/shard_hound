@@ -45,4 +45,27 @@ defmodule ShardHoundWeb.DataGeneratorLiveTest do
     assert has_element?(view, "#generation-status")
     assert_enqueued(worker: GenerateDatasetWorker, args: %{organizations: 1})
   end
+
+  test "runs the placement audit only on demand", %{conn: conn} do
+    ShardHound.Repo.insert!(%ShardHound.DeviceManagement.Organization{
+      name: "Audit Org",
+      slug: "audit-org",
+      shard_id: 0
+    })
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    refute has_element?(view, "#audit-results")
+
+    html = view |> element("#run-audit-button") |> render_click()
+
+    assert html =~ "1 of 1"
+    assert html =~ "organizations with no problems detected"
+  end
+
+  test "hides the move panel when pgdog is disabled", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    refute has_element?(view, "#move-keys")
+  end
 end

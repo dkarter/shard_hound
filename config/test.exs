@@ -5,10 +5,13 @@ import Config
 # The MIX_TEST_PARTITION environment variable can be used
 # to provide built-in test partitioning in CI environment.
 # Run `mix help test` for more information.
+# Tests run against the compose control database. Port 5436, not 5432:
+# localhost:5432 belongs to the local k3s cluster's postgres.
 config :shard_hound, ShardHound.Repo,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
+  port: String.to_integer(System.get_env("DATABASE_PORT", "5436")),
   database: "shard_hound_test#{System.get_env("MIX_TEST_PARTITION")}",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
@@ -17,6 +20,7 @@ config :shard_hound, ShardHound.ObanRepo,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
+  port: String.to_integer(System.get_env("DATABASE_PORT", "5436")),
   database: "shard_hound_test#{System.get_env("MIX_TEST_PARTITION")}",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: 2

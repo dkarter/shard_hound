@@ -5,8 +5,10 @@ services:
       POSTGRES_DB: shard_hound_dev
       POSTGRES_PASSWORD: postgres
       POSTGRES_USER: postgres
+    # Host port 5436: localhost:5432 is already taken by the k3s
+    # svclb-postgres forward inside the colima VM.
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5436:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d shard_hound_dev"]
       interval: 5s
@@ -15,8 +17,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql
 
+  # ADD SHARD and MOVE KEYS sync data over logical replication, so every
+  # shard runs with wal_level=logical and headroom for slots.
   shard_0:
     image: postgres:18
+    command: -c wal_level=logical -c max_replication_slots=8 -c max_wal_senders=10
     environment:
       POSTGRES_DB: shard_hound_dev
       POSTGRES_PASSWORD: postgres
@@ -33,6 +38,7 @@ services:
 
   shard_1:
     image: postgres:18
+    command: -c wal_level=logical -c max_replication_slots=8 -c max_wal_senders=10
     environment:
       POSTGRES_DB: shard_hound_dev
       POSTGRES_PASSWORD: postgres
@@ -47,18 +53,82 @@ services:
     volumes:
       - postgres_shard_1_data:/var/lib/postgresql
 
+  # Future shards, declared in their final shape and kept out of the
+  # serving topology by `provisioning = true` entries in pgdog.toml.
+  # Each `ADD SHARD shard_hound_dev <n>` activates the next one, in
+  # order. They idle empty until then.
+  shard_2:
+    image: postgres:18
+    command: -c wal_level=logical -c max_replication_slots=8 -c max_wal_senders=10
+    environment:
+      POSTGRES_DB: shard_hound_dev
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    ports:
+      - "127.0.0.1:5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d shard_hound_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_shard_2_data:/var/lib/postgresql
+
+  # Host port 5437: 5436 belongs to the control database.
+  shard_3:
+    image: postgres:18
+    command: -c wal_level=logical -c max_replication_slots=8 -c max_wal_senders=10
+    environment:
+      POSTGRES_DB: shard_hound_dev
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    ports:
+      - "127.0.0.1:5437:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d shard_hound_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_shard_3_data:/var/lib/postgresql
+
+  shard_4:
+    image: postgres:18
+    command: -c wal_level=logical -c max_replication_slots=8 -c max_wal_senders=10
+    environment:
+      POSTGRES_DB: shard_hound_dev
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    ports:
+      - "127.0.0.1:5438:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d shard_hound_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_shard_4_data:/var/lib/postgresql
+
   pgdog:
-    image: ghcr.io/pgdogdev/pgdog:v0.1.52
+    image: pgdog:move-keys
     depends_on:
       shard_0:
         condition: service_healthy
       shard_1:
         condition: service_healthy
+      shard_2:
+        condition: service_healthy
+      shard_3:
+        condition: service_healthy
+      shard_4:
+        condition: service_healthy
     environment:
       RUST_LOG: info
+    # Host ports 6433/9091: the k3s cluster in the colima VM already
+    # forwards 6432 and 9090 to its own pgdog stack.
     ports:
-      - "127.0.0.1:6432:6432"
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:6433:6432"
+      - "127.0.0.1:9091:9090"
     volumes:
       - ./docker/pgdog/pgdog.toml:/pgdog/pgdog.toml:ro
       - ./docker/pgdog/users.toml:/pgdog/users.toml:ro
@@ -67,3 +137,6 @@ volumes:
   postgres_data:
   postgres_shard_0_data:
   postgres_shard_1_data:
+  postgres_shard_2_data:
+  postgres_shard_3_data:
+  postgres_shard_4_data:
