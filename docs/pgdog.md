@@ -7,10 +7,17 @@ This setup uses a PgDog built from the `move-keys` branch of
 [#3](https://github.com/rlittlefield/pgdog/pull/3)), which adds the `ADD SHARD`
 and `MOVE KEYS` topology commands on top of
 [PR #1279](https://github.com/pgdogdev/pgdog/pull/1279)'s lookup routing.
-Build the image once from a checkout of that branch:
+Build the image once (clones the branch into a cache directory and runs
+`docker build`; takes several minutes the first time):
 
 ```bash
-docker build -t pgdog:move-keys /path/to/pgdog
+scripts/build-pgdog-image.sh
+```
+
+To build local, unpushed pgdog work instead, point it at your checkout:
+
+```bash
+PGDOG_DIR=~/dev/pgdog-fork scripts/build-pgdog-image.sh
 ```
 
 See [`docs/resharding.md`](resharding.md) for the resharding experiments.

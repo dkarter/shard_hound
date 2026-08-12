@@ -27,6 +27,7 @@ defmodule ShardHoundWeb.DataGeneratorLive do
      |> assign(:organizations, DemoData.organizations_with_shards())
      |> refresh_shards_panel()
      |> assign(:selected_org_ids, MapSet.new())
+     |> assign(:move_source, 0)
      |> assign(:move_target, "1")
      |> assign(:admin_task, nil)
      |> refresh_counts()}
@@ -85,6 +86,27 @@ defmodule ShardHoundWeb.DataGeneratorLive do
 
   def handle_event("audit", _params, socket) do
     {:noreply, assign(socket, :audit, DemoData.audit_placement())}
+  end
+
+  # Switching origin tabs clears the selection: MOVE KEYS moves keys
+  # from exactly one source shard per call.
+  def handle_event("move_source", %{"shard" => shard}, socket) do
+    source = String.to_integer(shard)
+
+    target =
+      if socket.assigns.move_target == to_string(source) do
+        socket.assigns.shard_ids
+        |> Enum.find(&(&1 != source))
+        |> to_string()
+      else
+        socket.assigns.move_target
+      end
+
+    {:noreply,
+     socket
+     |> assign(:move_source, source)
+     |> assign(:move_target, target)
+     |> assign(:selected_org_ids, MapSet.new())}
   end
 
   def handle_event("move_selection", params, socket) do
@@ -611,28 +633,60 @@ defmodule ShardHoundWeb.DataGeneratorLive do
               <h2 class="text-lg font-semibold text-white">Move organizations</h2>
               <p class="mt-1 text-sm text-slate-500">
                 One <span class="font-mono text-xs text-slate-400">MOVE KEYS &hellip; AUTO</span>
-                call for every selected organization: copy, catch up, cut over. All selections
-                must live on the same shard, and not on the target.
+                call for every selected organization: copy, catch up, cut over. Pick the
+                origin shard, select tenants, choose a target.
               </p>
             </div>
             <.task_chip id="move-task-status" task={@admin_task} />
           </div>
 
+          <div
+            id="move-source-tabs"
+            class="flex flex-wrap gap-1 border-b border-white/8 px-6 pt-3 sm:px-8"
+          >
+            <button
+              :for={shard <- @shard_ids}
+              id={"move-source-tab-#{shard}"}
+              type="button"
+              phx-click="move_source"
+              phx-value-shard={shard}
+              class={[
+                "rounded-t-xl border-b-2 px-4 py-2 text-xs font-semibold transition",
+                (shard == @move_source &&
+                   "border-cyan-300 bg-cyan-300/5 text-cyan-200") ||
+                  "border-transparent text-slate-500 hover:text-slate-300"
+              ]}
+            >
+              shard {shard}
+              <span class="ml-1 font-mono text-[10px] opacity-70">
+                {format_number(Map.get(@org_counts, shard, 0))}
+              </span>
+            </button>
+          </div>
+
           <form id="move-keys-form" phx-change="move_selection" phx-submit="move_shard">
             <div class="max-h-80 overflow-y-auto px-6 py-4 sm:px-8">
-              <p :if={@organizations == []} class="py-4 text-sm text-slate-500">
-                No organizations yet. Generate a dataset first.
+              <p
+                :if={not Enum.any?(@organizations, &(&1.shard_id == @move_source))}
+                class="py-4 text-sm text-slate-500"
+              >
+                No organizations on shard {@move_source}.
               </p>
-              <table :if={@organizations != []} class="w-full min-w-[24rem] text-sm">
+              <table
+                :if={Enum.any?(@organizations, &(&1.shard_id == @move_source))}
+                class="w-full min-w-[24rem] text-sm"
+              >
                 <thead>
                   <tr class="text-xs uppercase tracking-wider text-slate-500">
                     <th class="w-10 py-2"></th>
                     <th class="py-2 pr-4 text-left font-semibold">Organization</th>
-                    <th class="py-2 pl-4 text-right font-semibold">Shard</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr :for={org <- @organizations} class="border-t border-white/5">
+                  <tr
+                    :for={org <- Enum.filter(@organizations, &(&1.shard_id == @move_source))}
+                    class="border-t border-white/5"
+                  >
                     <td class="py-2.5">
                       <input
                         id={"move-org-#{org.id}"}
@@ -649,11 +703,6 @@ defmodule ShardHoundWeb.DataGeneratorLive do
                         <span class="ml-2 font-mono text-[11px] text-slate-600">{org.id}</span>
                       </label>
                     </td>
-                    <td class="py-2.5 pl-4 text-right">
-                      <span class="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 font-mono text-[11px] text-slate-300">
-                        shard {org.shard_id}
-                      </span>
-                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -668,6 +717,7 @@ defmodule ShardHoundWeb.DataGeneratorLive do
                 >
                   <option
                     :for={shard <- @shard_ids}
+                    :if={shard != @move_source}
                     value={shard}
                     selected={to_string(shard) == @move_target}
                   >
