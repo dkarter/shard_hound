@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:18
+    image: postgres:19
     environment:
       POSTGRES_DB: shard_hound_dev
       POSTGRES_PASSWORD: postgres
@@ -20,7 +20,7 @@ services:
   # ADD SHARD and MOVE KEYS sync data over logical replication, so every
   # shard runs with wal_level=logical and headroom for slots.
   shard_0:
-    image: postgres:18
+    image: postgres:19
     command: -c wal_level=logical -c max_replication_slots=8 -c max_wal_senders=10
     environment:
       POSTGRES_DB: shard_hound_dev
@@ -37,7 +37,7 @@ services:
       - postgres_shard_0_data:/var/lib/postgresql
 
   shard_1:
-    image: postgres:18
+    image: postgres:19
     command: -c wal_level=logical -c max_replication_slots=8 -c max_wal_senders=10
     environment:
       POSTGRES_DB: shard_hound_dev
@@ -58,7 +58,7 @@ services:
   # Each `ADD SHARD shard_hound_dev <n>` activates the next one, in
   # order. They idle empty until then.
   shard_2:
-    image: postgres:18
+    image: postgres:19
     command: -c wal_level=logical -c max_replication_slots=8 -c max_wal_senders=10
     environment:
       POSTGRES_DB: shard_hound_dev
@@ -76,7 +76,7 @@ services:
 
   # Host port 5437: 5436 belongs to the control database.
   shard_3:
-    image: postgres:18
+    image: postgres:19
     command: -c wal_level=logical -c max_replication_slots=8 -c max_wal_senders=10
     environment:
       POSTGRES_DB: shard_hound_dev
@@ -93,7 +93,7 @@ services:
       - postgres_shard_3_data:/var/lib/postgresql
 
   shard_4:
-    image: postgres:18
+    image: postgres:19
     command: -c wal_level=logical -c max_replication_slots=8 -c max_wal_senders=10
     environment:
       POSTGRES_DB: shard_hound_dev
